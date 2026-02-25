@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SocietyGuard — Security Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0c10; font-family: 'Segoe UI', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0c10; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+    select option { background: #0f1923; }
+    details summary::-webkit-details-marker { color: #64748b; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+    const {
+      BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
+      CartesianGrid, Tooltip, Legend, ResponsiveContainer
+    } = Recharts;
+
+    // ── CONFIG — replace with your actual Render backend URL ──
+    const BACKEND_URL = "https://societyguard-backend.onrender.com";
+    const API_KEY = "sg-mysociety-2026";
+
+    const CLIENTS = [
+      { id: "C01", name: "Green Valley Society" },
+      { id: "C02", name: "Sunrise Heights" },
+      { id: "C03", name: "Royal Palms" },
+    ];
+
+    const USERS = [
+      { id: 1, username: "superadmin", password: "super123", role: "superuser", name: "Raj Mehta" },
+      { id: 2, username: "secretary", password: "admin123", role: "admin", name: "Priya Sharma", client: "C01" },
+      { id: 3, username: "chairman", password: "chair123", role: "admin", name: "Vikram Nair", client: "C02" },
+      { id: 4, username: "guard1", password: "op123", role: "operator", name: "Suresh Kumar", client: "C01" },
+    ];
+
+    const COLORS = ["#38bdf8", "#818cf8", "#34d399", "#fb923c", "#f472b6", "#a78bfa"];
+
+    async function apiFetch(path) {
+      const res = await fetch(`${BACKEND_URL}${path}`, {
+        headers: { "x-api-key": API_KEY, "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    }
+
+    const S = {
+      app: { minHeight: "100vh", background: "#0a0c10", color: "#e2e8f0" },
+      loginPage: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg,#0a0c10,#0d1117,#0f1923)", position: "relative", overflow: "hidden" },
+      loginCard: { background: "rgba(15,23,36,0.95)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 16, padding: "48px 40px", width: 400, boxShadow: "0 0 60px rgba(56,189,248,0.08),0 40px 80px rgba(0,0,0,0.6)", position: "relative", zIndex: 1 },
+      label: { fontSize: 12, color: "#64748b", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, display: "block" },
+      input: { width: "100%", padding: "12px 14px", background: "rgba(30,41,59,0.8)", border: "1px solid rgba(51,65,85,0.8)", borderRadius: 8, color: "#e2e8f0", fontSize: 14, outline: "none" },
+      btn: { width: "100%", padding: 13, background: "linear-gradient(135deg,#0ea5e9,#38bdf8)", border: "none", borderRadius: 8, color: "#0a0c10", fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 8 },
+      nav: { background: "rgba(10,12,16,0.98)", borderBottom: "1px solid rgba(56,189,248,0.12)", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100 },
+      main: { padding: 24, maxWidth: 1400, margin: "0 auto" },
+      statsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 16, marginBottom: 24 },
+      statCard: (a) => ({ background: "rgba(15,23,36,0.9)", border: `1px solid ${a}22`, borderRadius: 12, padding: "20px 24px", position: "relative", overflow: "hidden" }),
+      chartCard: { background: "rgba(15,23,36,0.9)", border: "1px solid rgba(56,189,248,0.1)", borderRadius: 12, padding: "20px 24px" },
+      chartGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(420px,1fr))", gap: 20, marginBottom: 24 },
+      tableWrap: { background: "rgba(15,23,36,0.9)", border: "1px solid rgba(56,189,248,0.1)", borderRadius: 12, overflow: "hidden", marginBottom: 24 },
+      th: { padding: "12px 16px", textAlign: "left", color: "#64748b", fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid rgba(51,65,85,0.5)" },
+      td: { padding: "12px 16px", borderBottom: "1px solid rgba(51,65,85,0.3)", color: "#cbd5e1", fontSize: 13 },
+      select: { padding: "8px 12px", background: "rgba(15,23,36,0.95)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, color: "#e2e8f0", fontSize: 13, cursor: "pointer", outline: "none" },
+      pill: (a) => ({ padding: "6px 14px", borderRadius: 20, background: a ? "rgba(56,189,248,0.15)" : "rgba(30,41,59,0.5)", border: `1px solid ${a ? "rgba(56,189,248,0.4)" : "rgba(51,65,85,0.5)"}`, color: a ? "#38bdf8" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer" }),
+      toggleBtn: (a) => ({ padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, border: "1px solid rgba(56,189,248,0.2)", background: a ? "rgba(56,189,248,0.15)" : "transparent", color: a ? "#38bdf8" : "#64748b", cursor: "pointer" }),
+      badge: (r) => ({ padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", background: r==="superuser"?"rgba(168,85,247,0.15)":r==="admin"?"rgba(56,189,248,0.15)":"rgba(34,197,94,0.15)", color: r==="superuser"?"#c084fc":r==="admin"?"#38bdf8":"#4ade80", border:`1px solid ${r==="superuser"?"rgba(168,85,247,0.3)":r==="admin"?"rgba(56,189,248,0.3)":"rgba(34,197,94,0.3)"}` }),
+    };
+
+    const tt = { contentStyle: { background: "#0f1923", border: "1px solid #1e293b", borderRadius: 8, color: "#e2e8f0" } };
+
+    function StatCard({ label, value, delta, pos, accent="#38bdf8", icon }) {
+      return (
+        <div style={S.statCard(accent)}>
+          <div style={{ position:"absolute", top:0, right:0, width:80, height:80, background:`radial-gradient(circle,${accent}15 0%,transparent 70%)`, borderRadius:"50%" }} />
+          <div style={{ display:"flex", justifyContent:"space-between" }}>
+            <div>
+              <div style={{ fontSize:11, color:"#64748b", fontWeight:600, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>{label}</div>
+              <div style={{ fontSize:32, fontWeight:800, color:accent, lineHeight:1, marginBottom:4 }}>{value ?? "—"}</div>
+              {delta && <div style={{ fontSize:12, color:pos?"#4ade80":"#f87171", fontWeight:600 }}>{pos?"▲":"▼"} {delta}</div>}
+            </div>
+            <div style={{ fontSize:24, opacity:0.4 }}>{icon}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── LOGIN ──
+    function LoginPage({ onLogin }) {
+      const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState("");
+      const login = () => {
+        const user = USERS.find(x => x.username===u && x.password===p);
+        user ? onLogin(user) : setErr("Invalid credentials. Try again.");
+      };
+      return (
+        <div style={S.loginPage}>
+          <div style={{ position:"absolute", inset:0, backgroundImage:"linear-gradient(rgba(56,189,248,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,0.03) 1px,transparent 1px)", backgroundSize:"40px 40px" }} />
+          <div style={S.loginCard}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:32 }}>
+              <div style={{ width:40, height:40, background:"linear-gradient(135deg,#38bdf8,#0ea5e9)", borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20 }}>🏢</div>
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color:"#f1f5f9", letterSpacing:-0.5 }}>SocietyGuard</div>
+                <div style={{ fontSize:11, color:"#64748b", letterSpacing:2, textTransform:"uppercase" }}>Security Intelligence Platform</div>
+              </div>
+            </div>
+            <div style={{ marginBottom:20 }}>
+              <label style={S.label}>Username</label>
+              <input style={S.input} value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} placeholder="Enter username" />
+            </div>
+            <div style={{ marginBottom:24 }}>
+              <label style={S.label}>Password</label>
+              <input style={S.input} type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} placeholder="Enter password" />
+            </div>
+            <button style={S.btn} onClick={login}>Sign In →</button>
+            {err && <div style={{ color:"#f87171", fontSize:12, marginTop:8, textAlign:"center" }}>{err}</div>}
+            <div style={{ marginTop:24, padding:12, background:"rgba(30,41,59,0.5)", borderRadius:8, fontSize:11, color:"#475569" }}>
+              <div style={{ fontWeight:700, marginBottom:4, color:"#64748b" }}>DEMO CREDENTIALS</div>
+              <div>superadmin / super123 — Super User</div>
+              <div>secretary / admin123 — Admin (Green Valley)</div>
+              <div>guard1 / op123 — Operator</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── DASHBOARD ──
+    function Dashboard({ user, onLogout }) {
+      const [client, setClient] = useState(user.client || "C01");
+      const [stats, setStats] = useState(null);
+      const [events, setEvents] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [ok, setOk] = useState(null);
+      const [vFilter, setVFilter] = useState("today");
+      const [vChart, setVChart] = useState("Bar");
+      const [cChart, setCChart] = useState("Bar");
+      const [dChart, setDChart] = useState("Bar");
+      const [log, setLog] = useState([]);
+      const [copied, setCopied] = useState(false);
+      const timer = useRef(null);
+      const cid = user.role==="superuser" ? client : user.client;
+
+      const load = useCallback(async () => {
+        try {
+          const [s, e] = await Promise.all([apiFetch(`/api/stats?client_id=${cid}`), apiFetch(`/api/events?client_id=${cid}&limit=15`)]);
+          setStats(s); setEvents(e.events||[]); setOk(true);
+          if (e.events?.length) setLog(e.events.slice(0,10).map(ev => {
+            const t = new Date(ev.timestamp_ist).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+            return `[${t} IST] ${ev.event_type.toUpperCase()} @ ${ev.camera_location}${ev.visitor_count?` — ${ev.visitor_count} person(s)`:""}`;
+          }));
+        } catch { setOk(false); } finally { setLoading(false); }
+      }, [cid]);
+
+      useEffect(() => { load(); timer.current=setInterval(load,15000); return ()=>clearInterval(timer.current); }, [load]);
+
+      const webhook = `${BACKEND_URL}/webhook`;
+      const copy = () => { navigator.clipboard.writeText(webhook); setCopied(true); setTimeout(()=>setCopied(false),2000); };
+
+      const trend = stats ? (vFilter==="today" ? stats.trends.hourly.filter(h=>h.hour>=6) : stats.trends.weekly) : [];
+      const cams = stats?.camera_activity || [];
+      const down = (stats?.downtime||[]).map(d=>({...d,"Downtime (hrs)":parseFloat((d.downtime_minutes/60).toFixed(1))}));
+      const top = cams[0];
+      const todayV = stats?.visitors.today??0;
+      const delta = todayV-(stats?.visitors.yesterday??0);
+      const totalDT = down.reduce((s,c)=>s+c["Downtime (hrs)"],0).toFixed(1);
+      const affCams = down.filter(c=>c.incidents>0).length;
+
+      return (
+        <div style={S.app}>
+          <nav style={S.nav}>
+            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+              <span style={{ fontSize:20 }}>🏢</span>
+              <span style={{ fontSize:16, fontWeight:700, color:"#38bdf8" }}>SocietyGuard</span>
+              <span style={S.badge(user.role)}>{user.role}</span>
+              {ok!==null && <span style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"4px 10px", borderRadius:20, fontSize:11, fontWeight:600, background:ok?"rgba(74,222,128,0.1)":"rgba(248,113,113,0.1)", color:ok?"#4ade80":"#f87171", border:`1px solid ${ok?"rgba(74,222,128,0.2)":"rgba(248,113,113,0.2)"}` }}>
+                <span style={{ width:6, height:6, borderRadius:"50%", background:ok?"#4ade80":"#f87171", display:"inline-block" }} />
+                {ok?"Live":"Backend Offline"}
+              </span>}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+              {user.role==="superuser" && <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"#64748b" }}>CLIENT:</span>
+                <select style={S.select} value={client} onChange={e=>setClient(e.target.value)}>
+                  {CLIENTS.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>}
+              <span style={{ fontSize:13, color:"#94a3b8" }}>👤 {user.name}</span>
+              <button style={{ padding:"7px 16px", background:"transparent", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#f87171", fontSize:12, fontWeight:600, cursor:"pointer" }} onClick={onLogout}>Sign Out</button>
+            </div>
+          </nav>
+
+          <main style={S.main}>
+            <div style={{ marginBottom:24 }}>
+              <div style={{ fontSize:22, fontWeight:700, color:"#f1f5f9", letterSpacing:-0.5, marginBottom:4 }}>{CLIENTS.find(c=>c.id===cid)?.name}</div>
+              <div style={{ fontSize:13, color:"#64748b" }}>{new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · All times in IST</div>
+            </div>
+
+            {/* WEBHOOK PANEL */}
+            <div style={{ background:"rgba(10,12,16,0.95)", border:"1px solid rgba(56,189,248,0.1)", borderRadius:12, padding:16, marginBottom:24 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <span style={{ fontSize:12, color:"#38bdf8", fontWeight:700, letterSpacing:2 }}>⚡ WEBHOOK ENDPOINT</span>
+                <span style={{ fontSize:11, color:"#64748b" }}>Auto-refreshes every 15s</span>
+              </div>
+              <div style={{ background:"rgba(30,41,59,0.5)", border:"1px solid rgba(56,189,248,0.15)", borderRadius:8, padding:"12px 16px", fontFamily:"monospace", fontSize:12, color:"#38bdf8", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                <span>POST &nbsp;{webhook}</span>
+                <button style={{ padding:"4px 10px", background:"rgba(56,189,248,0.1)", border:"1px solid rgba(56,189,248,0.3)", borderRadius:4, color:"#38bdf8", fontSize:11, cursor:"pointer", fontWeight:600 }} onClick={copy}>{copied?"✓ Copied":"Copy"}</button>
+              </div>
+              <div style={{ fontSize:10, color:"#64748b", letterSpacing:1, marginBottom:4 }}>LIVE EVENT LOG</div>
+              <div style={{ maxHeight:120, overflowY:"auto", fontFamily:"monospace", fontSize:11 }}>
+                {log.length===0
+                  ? <span style={{ color:"#475569" }}>No events yet. Send a POST to the webhook URL above.</span>
+                  : log.map((l,i)=><div key={i} style={{ color:i===0?"#4ade80":"#475569", marginBottom:2 }}>{l}</div>)}
+              </div>
+            </div>
+
+            {loading ? <div style={{ textAlign:"center", padding:40, color:"#38bdf8" }}>⏳ Loading data...</div> : <>
+              {/* STATS */}
+              <div style={S.statsGrid}>
+                <StatCard label="Today's Visitors" value={todayV} delta={`${Math.abs(delta)} vs yesterday`} pos={delta>=0} accent="#38bdf8" icon="👁️" />
+                <StatCard label="This Week" value={stats?.visitors.week??0} accent="#818cf8" icon="📅" />
+                <StatCard label="Busiest Camera" value={top?.camera_id||"—"} delta={top?`${top.count} events · ${top.location}`:"No data"} pos={false} accent="#fb923c" icon="📷" />
+                <StatCard label="Total Downtime" value={`${totalDT}h`} delta={`${affCams} camera${affCams!==1?"s":""} affected`} pos={false} accent="#f87171" icon="⚠️" />
+              </div>
+
+              {/* CHARTS */}
+              <div style={S.chartGrid}>
+                {/* Visitor Trends */}
+                <div style={S.chartCard}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:10 }}>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:700, color:"#e2e8f0" }}>Visitor Trends</div>
+                      <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>IST · from webhook data</div>
+                    </div>
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                      <div style={{ display:"flex", gap:8 }}>
+                        {["today","week"].map(f=><button key={f} style={S.pill(vFilter===f)} onClick={()=>setVFilter(f)}>{f==="today"?"Today vs Yesterday":"Week by Week"}</button>)}
+                      </div>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {["Bar","Pie"].map(o=><button key={o} style={S.toggleBtn(vChart===o)} onClick={()=>setVChart(o)}>{o}</button>)}
+                      </div>
+                    </div>
+                  </div>
+                  {trend.length===0
+                    ? <div style={{ textAlign:"center", padding:40, color:"#475569", fontSize:12 }}>No visitor events yet</div>
+                    : <ResponsiveContainer width="100%" height={220}>
+                      {vChart==="Bar"
+                        ? <BarChart data={trend} barSize={14}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(51,65,85,0.4)" />
+                            <XAxis dataKey="label" tick={{ fill:"#64748b", fontSize:10 }} />
+                            <YAxis tick={{ fill:"#64748b", fontSize:10 }} />
+                            <Tooltip {...tt} /><Legend />
+                            {vFilter==="week"
+                              ? <Bar dataKey="visitors" fill="#38bdf8" radius={[4,4,0,0]} />
+                              : <><Bar dataKey="today" name="Today" fill="#38bdf8" radius={[4,4,0,0]} /><Bar dataKey="yesterday" name="Yesterday" fill="#818cf8" radius={[4,4,0,0]} /></>}
+                          </BarChart>
+                        : <PieChart><Pie data={trend.filter(d=>(d.today||d.visitors||0)>0)} dataKey={vFilter==="week"?"visitors":"today"} nameKey="label" cx="50%" cy="50%" outerRadius={80} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
+                            {trend.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}
+                          </Pie><Tooltip {...tt} /></PieChart>}
+                    </ResponsiveContainer>}
+                </div>
+
+                {/* Camera Activity */}
+                <div style={S.chartCard}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:700, color:"#e2e8f0" }}>Camera Activity</div>
+                      <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>Events this week</div>
+                    </div>
+                    <div style={{ display:"flex", gap:4 }}>
+                      {["Bar","Pie"].map(o=><button key={o} style={S.toggleBtn(cChart===o)} onClick={()=>setCChart(o)}>{o}</button>)}
+                    </div>
+                  </div>
+                  {cams.length===0
+                    ? <div style={{ textAlign:"center", padding:40, color:"#475569", fontSize:12 }}>No camera events yet</div>
+                    : <ResponsiveContainer width="100%" height={220}>
+                      {cChart==="Bar"
+                        ? <BarChart data={cams} layout="vertical" barSize={14}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(51,65,85,0.4)" horizontal={false} />
+                            <XAxis type="number" tick={{ fill:"#64748b", fontSize:10 }} />
+                            <YAxis type="category" dataKey="camera_id" tick={{ fill:"#64748b", fontSize:10 }} width={60} />
+                            <Tooltip {...tt} formatter={(v,_,p)=>[v,p.payload.location]} />
+                            <Bar dataKey="count" name="Events" radius={[0,4,4,0]}>
+                              {cams.map((_,i)=><Cell key={i} fill={i===0?"#fb923c":COLORS[i%COLORS.length]} />)}
+                            </Bar>
+                          </BarChart>
+                        : <PieChart><Pie data={cams} dataKey="count" nameKey="camera_id" cx="50%" cy="50%" outerRadius={80} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
+                            {cams.map((_,i)=><Cell key={i} fill={i===0?"#fb923c":COLORS[i%COLORS.length]} />)}
+                          </Pie><Tooltip {...tt} /></PieChart>}
+                    </ResponsiveContainer>}
+                  {top && <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(251,146,60,0.08)", border:"1px solid rgba(251,146,60,0.2)", borderRadius:8, fontSize:12, color:"#fdba74" }}>
+                    🚨 <strong>{top.camera_id} ({top.location})</strong> — highest activity, consider deploying guard
+                  </div>}
+                </div>
+              </div>
+
+              {/* DOWNTIME */}
+              <div style={{ ...S.chartCard, marginBottom:24 }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:700, color:"#e2e8f0" }}>Camera Downtime</div>
+                    <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>From camera_offline events · UTC→IST</div>
+                  </div>
+                  <div style={{ display:"flex", gap:4 }}>
+                    {["Bar","Pie"].map(o=><button key={o} style={S.toggleBtn(dChart===o)} onClick={()=>setDChart(o)}>{o}</button>)}
+                  </div>
+                </div>
+                {down.length===0
+                  ? <div style={{ textAlign:"center", padding:40, color:"#475569", fontSize:12 }}>No camera_offline events yet</div>
+                  : <ResponsiveContainer width="100%" height={200}>
+                    {dChart==="Bar"
+                      ? <BarChart data={down} barSize={20}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(51,65,85,0.4)" />
+                          <XAxis dataKey="camera_id" tick={{ fill:"#64748b", fontSize:11 }} />
+                          <YAxis tick={{ fill:"#64748b", fontSize:11 }} unit="h" />
+                          <Tooltip {...tt} formatter={(v,_,p)=>[`${v}h (${p.payload.incidents} incidents)`,p.payload.location||p.payload.camera_id]} />
+                          <Bar dataKey="Downtime (hrs)" radius={[4,4,0,0]}>
+                            {down.map((d,i)=><Cell key={i} fill={d["Downtime (hrs)"]>1?"#f87171":"#34d399"} />)}
+                          </Bar>
+                        </BarChart>
+                      : <PieChart><Pie data={down.filter(d=>d["Downtime (hrs)"]>0)} dataKey="Downtime (hrs)" nameKey="camera_id" cx="50%" cy="50%" outerRadius={80} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
+                          {down.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}
+                        </Pie><Tooltip {...tt} /></PieChart>}
+                  </ResponsiveContainer>}
+              </div>
+
+              {/* CAMERA TABLE */}
+              {down.length>0 && <div style={S.tableWrap}>
+                <div style={{ padding:"16px 24px", display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(56,189,248,0.08)" }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:"#e2e8f0" }}>Camera Status</span>
+                  <span style={{ fontSize:11, color:"#64748b" }}>camera_offline / camera_online events</span>
+                </div>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                  <thead><tr>{["Camera","Location","Incidents","Downtime","Status"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{down.sort((a,b)=>b["Downtime (hrs)"]-a["Downtime (hrs)"]).map((c,i)=>(
+                    <tr key={i}>
+                      <td style={S.td}><strong style={{ color:"#e2e8f0" }}>{c.camera_id}</strong></td>
+                      <td style={S.td}>{c.location||c.camera_id}</td>
+                      <td style={S.td}>{c.incidents}</td>
+                      <td style={S.td}>{c["Downtime (hrs)"]}h</td>
+                      <td style={{ ...S.td, color:c["Downtime (hrs)"]>1?"#fbbf24":"#4ade80", fontSize:11 }}>{c["Downtime (hrs)"]>1?"⚠️ Maintenance needed":"✅ Healthy"}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>}
+
+              {/* EVENTS FEED */}
+              {(user.role==="admin"||user.role==="superuser") && events.length>0 && <div style={S.tableWrap}>
+                <div style={{ padding:"16px 24px", display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(56,189,248,0.08)" }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:"#e2e8f0" }}>Recent Events</span>
+                  <span style={{ fontSize:11, color:"#64748b" }}>Last 15 · UTC→IST</span>
+                </div>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                  <thead><tr>{["IST Time","Camera","Location","Event","Count","Confidence"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>{events.map((e,i)=>(
+                    <tr key={i}>
+                      <td style={S.td}>{new Date(e.timestamp_ist).toLocaleString("en-IN",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"short"})}</td>
+                      <td style={S.td}><span style={{ color:"#38bdf8", fontWeight:600 }}>{e.camera_id}</span></td>
+                      <td style={S.td}>{e.camera_location}</td>
+                      <td style={S.td}><span style={{ padding:"2px 8px", borderRadius:4, fontSize:11, fontWeight:600, background:e.event_type==="camera_offline"?"rgba(248,113,113,0.15)":e.event_type==="loitering"?"rgba(251,191,36,0.15)":"rgba(56,189,248,0.1)", color:e.event_type==="camera_offline"?"#f87171":e.event_type==="loitering"?"#fbbf24":"#38bdf8" }}>{e.event_type.replace(/_/g," ")}</span></td>
+                      <td style={S.td}>{e.visitor_count||"—"}</td>
+                      <td style={S.td}>{e.confidence?`${(e.confidence*100).toFixed(0)}%`:"—"}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>}
+            </>}
+          </main>
+        </div>
+      );
+    }
+
+    function App() {
+      const [user, setUser] = useState(null);
+      return user ? <Dashboard user={user} onLogout={()=>setUser(null)} /> : <LoginPage onLogin={setUser} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
