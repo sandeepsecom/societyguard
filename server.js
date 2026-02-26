@@ -32,6 +32,11 @@ async function initDB() {
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS society_id INT`);
+    // Critical: allow NULL password_hash for invite-based users (set password later)
+    await pool.query(`ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL`);
+    // Clean up any stuck users from failed invites (no password set, not the seeded ones)
+    await pool.query(`DELETE FROM users WHERE password_hash IS NULL AND invite_token IS NOT NULL AND created_at < NOW() - INTERVAL '1 minute'`);
+    console.log("Migration complete");
   } catch(e) { console.log("Migration note:", e.message); }
 
   await pool.query(`
