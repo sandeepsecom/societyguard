@@ -489,12 +489,17 @@ app.get("/api/users", requireAuth, requireRole("superuser"), async (req, res) =>
 app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) => {
   const { username, role, name, email, society_id } = req.body;
   if (!username||!role||!name||!email) return res.status(400).json({ error:"All fields required" });
-  // Pre-check for conflicts with clear messages
+  // Pre-check — auto-delete stuck incomplete records (no password set), block real conflicts
   try {
-    const check = await pool.query("SELECT username,email FROM users WHERE username=$1 OR email=$2", [username, email]);
-    if (check.rows.length) {
-      if (check.rows[0].username===username) return res.status(400).json({ error:`Username "${username}" is already taken.` });
-      if (check.rows[0].email===email) return res.status(400).json({ error:`Email "${email}" is already registered.` });
+    const check = await pool.query("SELECT id,username,email,password_hash FROM users WHERE username=$1 OR email=$2", [username, email]);
+    for (const row of check.rows) {
+      if (!row.password_hash) {
+        await pool.query("DELETE FROM users WHERE id=$1", [row.id]);
+        console.log("Cleaned stuck user:", row.username, row.email);
+      } else {
+        if (row.username===username) return res.status(400).json({ error:`Username "${username}" is already taken. Choose a different one.` });
+        if (row.email===email) return res.status(400).json({ error:`Email "${email}" is already used by an active account.` });
+      }
     }
   } catch(e) { console.error("Pre-check error:", e.message); }
   const token = crypto.randomBytes(32).toString("hex");
