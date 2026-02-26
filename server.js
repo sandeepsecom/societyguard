@@ -7,7 +7,6 @@
 const express    = require("express");
 const cors       = require("cors");
 const { Pool }   = require("pg");
-const nodemailer = require("nodemailer");
 const bcrypt     = require("bcryptjs");
 const crypto     = require("crypto");
 
@@ -123,6 +122,20 @@ async function initDB() {
       created_at  TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- User-Society access (multi-society support)
+    CREATE TABLE IF NOT EXISTS user_societies (
+      user_id     INT REFERENCES users(id) ON DELETE CASCADE,
+      society_id  INT REFERENCES societies(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, society_id)
+    );
+
+    -- User-Society access (multi-society per user)
+    CREATE TABLE IF NOT EXISTS user_societies (
+      user_id     INT REFERENCES users(id) ON DELETE CASCADE,
+      society_id  INT REFERENCES societies(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, society_id)
+    );
+
     -- App settings (logo etc)
     CREATE TABLE IF NOT EXISTS app_settings (
       key         TEXT PRIMARY KEY,
@@ -169,6 +182,14 @@ async function initDB() {
   }
 
   // Seed default cameras
+  // Seed user_societies for existing users that have society_id set
+  try {
+    const { rows: usersWithSoc } = await pool.query("SELECT id,society_id FROM users WHERE society_id IS NOT NULL");
+    for (const u of usersWithSoc) {
+      await pool.query("INSERT INTO user_societies (user_id,society_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [u.id, u.society_id]);
+    }
+  } catch(e) { console.log("user_societies seed:", e.message); }
+
   const { rowCount: camCount } = await pool.query("SELECT 1 FROM cameras LIMIT 1");
   if (camCount === 0) {
     const { rows: socs } = await pool.query("SELECT id FROM societies WHERE code='C01'");
@@ -184,21 +205,20 @@ async function initDB() {
 }
 
 // ── EMAIL ──
-const transporter = process.env.SMTP_USER ? nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: parseInt(process.env.SMTP_PORT||"465"),
-  secure: (process.env.SMTP_PORT||"465")==="465",
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  tls: { rejectUnauthorized: false },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-}) : null;
-
+// ── EMAIL via Resend API ──
 async function sendEmail(to, subject, html) {
-  if (!transporter) return;
+  const apiKey = process.env.RESEND_API_KEY;
+  const from   = process.env.RESEND_FROM || "SocietyGuard <onboarding@resend.dev>";
+  if (!apiKey) { console.warn("RESEND_API_KEY not set — email skipped"); return; }
   try {
-    await transporter.sendMail({ from:`"SocietyGuard" <${process.env.SMTP_USER}>`, to, subject, html });
-    console.log(`Email sent to ${to}: ${subject}`);
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to, subject, html })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || JSON.stringify(data));
+    console.log(`✉️  Email sent to ${to}: ${subject} (id: ${data.id})`);
   } catch (err) { console.error("Email error:", err.message); }
 }
 
@@ -393,7 +413,15 @@ app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username||!password) return res.status(400).json({ error:"Missing credentials" });
   try {
-    const { rows } = await pool.query("SELECT u.*,s.code as society_code,s.name as society_name FROM users u LEFT JOIN societies s ON u.society_id=s.id WHERE u.username=$1 AND u.is_active=true", [username]);
+    const { rows } = await pool.query(`
+      SELECT u.*,
+        COALESCE(json_agg(json_build_object('id',s.id,'name',s.name,'code',s.code)) FILTER (WHERE s.id IS NOT NULL),'[]') as societies
+      FROM users u
+      LEFT JOIN user_societies us ON us.user_id=u.id
+      LEFT JOIN societies s ON s.id=us.society_id
+      WHERE u.username=$1 AND u.is_active=true
+      GROUP BY u.id
+    `, [username]);
     if (!rows.length) return res.status(401).json({ error:"Invalid credentials" });
     const user = rows[0];
     if (!user.password_hash) return res.status(401).json({ error:"Account not activated. Check your email." });
@@ -401,7 +429,7 @@ app.post("/api/login", async (req, res) => {
     if (!match) return res.status(401).json({ error:"Invalid credentials" });
     await pool.query("UPDATE users SET last_login=NOW() WHERE id=$1", [user.id]);
     await auditLog("login", "user", user.id, { username }, user, req.ip, user.society_id);
-    return res.json({ id:user.id, username:user.username, role:user.role, name:user.name, client:user.society_code, society_name:user.society_name });
+    return res.json({ id:user.id, username:user.username, role:user.role, name:user.name, societies:user.societies||[], client:(user.societies&&user.societies[0]?.code)||user.society_code||null, society_name:(user.societies&&user.societies[0]?.name)||user.society_name||null });
   } catch (err) { return res.status(500).json({ error:"Login failed" }); }
 });
 
@@ -488,11 +516,18 @@ app.delete("/api/cameras/:id", requireAuth, requireRole("superuser"), async (req
 
 // ── USERS ──
 app.get("/api/users", requireAuth, requireRole("superuser"), async (req, res) => {
-  const { rows } = await pool.query("SELECT u.id,u.username,u.role,u.name,u.email,u.is_active,u.last_login,u.created_at,s.name as society_name,s.id as society_id FROM users u LEFT JOIN societies s ON u.society_id=s.id ORDER BY u.created_at DESC");
+  const { rows } = await pool.query(`
+    SELECT u.id,u.username,u.role,u.name,u.email,u.is_active,u.last_login,u.created_at,
+      COALESCE(json_agg(json_build_object('id',s.id,'name',s.name,'code',s.code)) FILTER (WHERE s.id IS NOT NULL),'[]') as societies
+    FROM users u
+    LEFT JOIN user_societies us ON us.user_id=u.id
+    LEFT JOIN societies s ON s.id=us.society_id
+    GROUP BY u.id ORDER BY u.created_at DESC
+  `);
   return res.json(rows);
 });
 app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) => {
-  const { username, role, name, email, society_id } = req.body;
+  const { username, role, name, email, society_id, society_ids } = req.body;
   if (!username||!role||!name||!email) return res.status(400).json({ error:"All fields required" });
   // Pre-check — auto-delete stuck incomplete records (no password set), block real conflicts
   try {
@@ -511,21 +546,36 @@ app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) =
   const expires = new Date(Date.now()+24*60*60*1000);
   try {
     const { rows } = await pool.query(
-      "INSERT INTO users (username,role,name,email,society_id,invite_token,invite_expires) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-      [username, role, name, email, society_id||null, token, expires]
+      "INSERT INTO users (username,role,name,email,invite_token,invite_expires) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+      [username, role, name, email, token, expires]
     );
-    await sendInviteEmail(rows[0], token);
-    await auditLog("create_user", "user", rows[0].id, {username, role, name, email}, req.currentUser, req.ip, society_id);
-    return res.json({ ...rows[0], message:`Invite sent to ${email}` });
+    const newUser = rows[0];
+    // Insert all society access
+    const sids = Array.isArray(society_ids) ? society_ids : (society_id ? [society_id] : []);
+    for (const sid of sids) {
+      await pool.query("INSERT INTO user_societies (user_id,society_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [newUser.id, sid]);
+    }
+    await sendInviteEmail(newUser, token);
+    await auditLog("create_user", "user", newUser.id, {username, role, name, email}, req.currentUser, req.ip, sids[0]||null);
+    return res.json({ ...newUser, message:`Invite sent to ${email}` });
   } catch(e) {
     console.error("User create DB error:", e.message, "code:", e.code, "constraint:", e.constraint);
     return res.status(400).json({ error: e.detail || e.message || "Failed to create user" });
   }
 });
 app.put("/api/users/:id", requireAuth, requireRole("superuser"), async (req, res) => {
-  const { name, role, email, society_id, is_active } = req.body;
-  const { rows } = await pool.query("UPDATE users SET name=COALESCE($1,name),role=COALESCE($2,role),email=COALESCE($3,email),society_id=COALESCE($4,society_id),is_active=COALESCE($5,is_active) WHERE id=$6 RETURNING id,username,role,name,email,is_active", [name,role,email,society_id,is_active,req.params.id]);
-  await auditLog("update_user", "user", req.params.id, req.body, req.currentUser, req.ip, society_id);
+  const { name, role, email, society_ids, is_active } = req.body;
+  const { rows } = await pool.query(
+    "UPDATE users SET name=COALESCE($1,name),role=COALESCE($2,role),email=COALESCE($3,email),is_active=COALESCE($4,is_active) WHERE id=$5 RETURNING id,username,role,name,email,is_active",
+    [name,role,email,is_active,req.params.id]
+  );
+  if (Array.isArray(society_ids)) {
+    await pool.query("DELETE FROM user_societies WHERE user_id=$1", [req.params.id]);
+    for (const sid of society_ids) {
+      await pool.query("INSERT INTO user_societies (user_id,society_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [req.params.id, sid]);
+    }
+  }
+  await auditLog("update_user", "user", req.params.id, req.body, req.currentUser, req.ip, null);
   return res.json(rows[0]);
 });
 app.delete("/api/users/:id", requireAuth, requireRole("superuser"), async (req, res) => {
@@ -631,7 +681,7 @@ app.delete("/api/events", requireAuth, requireRole("superuser"), async (req,res)
 
 app.get("/health", async (_,res) => {
   const {rows}=await pool.query("SELECT COUNT(*) as total FROM events");
-  return res.json({ status:"ok", events_stored:parseInt(rows[0].total), time_ist:toIST(new Date().toISOString()), database:"PostgreSQL", email_alerts:transporter?"enabled":"disabled" });
+  return res.json({ status:"ok", events_stored:parseInt(rows[0].total), time_ist:toIST(new Date().toISOString()), database:"PostgreSQL", email_alerts:process.env.RESEND_API_KEY?"enabled":"disabled" });
 });
 
 // ── START ──
