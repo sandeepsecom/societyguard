@@ -489,6 +489,14 @@ app.get("/api/users", requireAuth, requireRole("superuser"), async (req, res) =>
 app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) => {
   const { username, role, name, email, society_id } = req.body;
   if (!username||!role||!name||!email) return res.status(400).json({ error:"All fields required" });
+  // Pre-check for conflicts with clear messages
+  try {
+    const check = await pool.query("SELECT username,email FROM users WHERE username=$1 OR email=$2", [username, email]);
+    if (check.rows.length) {
+      if (check.rows[0].username===username) return res.status(400).json({ error:`Username "${username}" is already taken.` });
+      if (check.rows[0].email===email) return res.status(400).json({ error:`Email "${email}" is already registered.` });
+    }
+  } catch(e) { console.error("Pre-check error:", e.message); }
   const token = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now()+24*60*60*1000);
   try {
@@ -499,7 +507,10 @@ app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) =
     await sendInviteEmail(rows[0], token);
     await auditLog("create_user", "user", rows[0].id, {username, role, name, email}, req.currentUser, req.ip, society_id);
     return res.json({ ...rows[0], message:`Invite sent to ${email}` });
-  } catch(e) { return res.status(400).json({ error:"Username or email already exists" }); }
+  } catch(e) {
+    console.error("User create DB error:", e.message, "code:", e.code, "constraint:", e.constraint);
+    return res.status(400).json({ error: e.detail || e.message || "Failed to create user" });
+  }
 });
 app.put("/api/users/:id", requireAuth, requireRole("superuser"), async (req, res) => {
   const { name, role, email, society_id, is_active } = req.body;
