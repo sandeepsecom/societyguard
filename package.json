@@ -1,0 +1,15 @@
+{
+  "name": "societyguard-backend",
+  "version": "3.0.0",
+  "description": "SocietyGuard - Full Security Dashboard Backend",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.7",
+    "pg": "^8.11.3"
+  },
+  "engines": { "node": "20.x" }
+}
