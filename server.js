@@ -689,6 +689,6 @@ initDB().then(()=>{
   scheduleDailyReport();
   app.listen(PORT,()=>{
     console.log(`SocietyGuard v3 running on port ${PORT}`);
-    console.log(`Email: ${transporter?"enabled":"disabled"}`);
+    console.log(`Email: ${process.env.RESEND_API_KEY?"enabled (Resend)":"disabled (no RESEND_API_KEY)"}`);
   });
 }).catch(err=>{ console.error("DB init failed:",err.message); process.exit(1); });
