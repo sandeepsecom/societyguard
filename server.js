@@ -224,7 +224,12 @@ async function sendEmail(to, subject, html) {
 
 async function sendInviteEmail(user, token) {
   const link = `${FRONTEND_URL}?invite=${token}`;
-  await sendEmail(user.email, "You've been invited to SocietyGuard", `
+  const cleanEmail = (user.email||"").trim();
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    console.error("Invalid email for user:", user.username, JSON.stringify(user.email));
+    return;
+  }
+  await sendEmail(cleanEmail, "You've been invited to SocietyGuard", `
     <div style="font-family:sans-serif;max-width:500px;margin:0 auto">
       <div style="background:#0f1923;padding:32px;border-radius:12px;color:#e2e8f0">
         <h2 style="color:#38bdf8;margin:0 0 16px">Welcome to SocietyGuard 🏢</h2>
@@ -305,6 +310,15 @@ async function sendDailyReports() {
 }
 
 // Schedule daily report at 3:30 AM UTC (9 AM IST)
+// ── KEEP-ALIVE PING (prevents Render free tier spin-down) ──
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || "https://societyguard-backend.onrender.com";
+setInterval(async () => {
+  try {
+    await fetch(SELF_URL + "/health");
+    console.log("Keep-alive ping sent");
+  } catch(e) { console.log("Keep-alive ping failed:", e.message); }
+}, 14 * 60 * 1000); // every 14 minutes
+
 function scheduleDailyReport() {
   const now = new Date();
   const next = new Date();
@@ -527,7 +541,8 @@ app.get("/api/users", requireAuth, requireRole("superuser"), async (req, res) =>
   return res.json(rows);
 });
 app.post("/api/users", requireAuth, requireRole("superuser"), async (req, res) => {
-  const { username, role, name, email, society_id, society_ids } = req.body;
+  const { username, role, name, society_id, society_ids } = req.body;
+  const email = (req.body.email||'').trim();
   if (!username||!role||!name||!email) return res.status(400).json({ error:"All fields required" });
   // Pre-check — auto-delete stuck incomplete records (no password set), block real conflicts
   try {
