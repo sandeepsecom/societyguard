@@ -367,7 +367,7 @@ async function auditLog(action, entity, entity_id, details, user, ip, society_id
 
 // ── MIDDLEWARE ──
 app.use(express.json({ limit: "10mb" }));
-app.use(cors({ origin: process.env.FRONTEND_URL||"*", methods:["GET","POST","PUT","DELETE"], allowedHeaders:["Content-Type","x-api-key","x-user-id"] }));
+app.use(cors({ origin: true, methods:["GET","POST","PUT","DELETE"], allowedHeaders:["Content-Type","x-api-key","x-user-id"] }));
 
 function requireApiKey(req, res, next) {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error:"Unauthorized" });
