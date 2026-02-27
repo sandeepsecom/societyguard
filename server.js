@@ -205,20 +205,37 @@ async function initDB() {
 }
 
 // ── EMAIL ──
-// ── EMAIL via Resend API ──
+// ── EMAIL via SendGrid API ──
 async function sendEmail(to, subject, html) {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from   = process.env.RESEND_FROM || "SocietyGuard <onboarding@resend.dev>";
-  if (!apiKey) { console.warn("RESEND_API_KEY not set — email skipped"); return; }
+  const apiKey = process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY;
+  const from   = process.env.EMAIL_FROM || process.env.RESEND_FROM || "SocietyGuard <noreply@cloudcctv.app>";
+  if (!apiKey) { console.warn("No email API key set — email skipped"); return; }
+  // Use SendGrid if SENDGRID_API_KEY set, else fall back to Resend
+  const useSendGrid = !!process.env.SENDGRID_API_KEY;
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to, subject, html })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || JSON.stringify(data));
-    console.log(`✉️  Email sent to ${to}: ${subject} (id: ${data.id})`);
+    let res, data;
+    if (useSendGrid) {
+      res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to.trim() }] }],
+          from: { email: "noreply@cloudcctv.app", name: "SocietyGuard" },
+          subject, content: [{ type: "text/html", value: html }]
+        })
+      });
+      if (!res.ok) { const t=await res.text(); throw new Error(t); }
+      console.log(`✉️  Email sent via SendGrid to ${to}: ${subject}`);
+    } else {
+      res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: to.trim(), subject, html })
+      });
+      data = await res.json();
+      if (!res.ok) throw new Error(data.message || JSON.stringify(data));
+      console.log(`✉️  Email sent via Resend to ${to}: ${subject} (id: ${data.id})`);
+    }
   } catch (err) { console.error("Email error:", err.message); }
 }
 
@@ -696,7 +713,7 @@ app.delete("/api/events", requireAuth, requireRole("superuser"), async (req,res)
 
 app.get("/health", async (_,res) => {
   const {rows}=await pool.query("SELECT COUNT(*) as total FROM events");
-  return res.json({ status:"ok", events_stored:parseInt(rows[0].total), time_ist:toIST(new Date().toISOString()), database:"PostgreSQL", email_alerts:process.env.RESEND_API_KEY?"enabled":"disabled" });
+  return res.json({ status:"ok", events_stored:parseInt(rows[0].total), time_ist:toIST(new Date().toISOString()), database:"PostgreSQL", email_alerts:(process.env.SENDGRID_API_KEY||process.env.RESEND_API_KEY)?"enabled":"disabled" });
 });
 
 // ── START ──
@@ -704,6 +721,6 @@ initDB().then(()=>{
   scheduleDailyReport();
   app.listen(PORT,()=>{
     console.log(`SocietyGuard v3 running on port ${PORT}`);
-    console.log(`Email: ${process.env.RESEND_API_KEY?"enabled (Resend)":"disabled (no RESEND_API_KEY)"}`);
+    console.log(`Email: ${process.env.SENDGRID_API_KEY?"enabled (SendGrid)":process.env.RESEND_API_KEY?"enabled (Resend)":"disabled"}`);
   });
 }).catch(err=>{ console.error("DB init failed:",err.message); process.exit(1); });
