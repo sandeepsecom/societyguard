@@ -361,9 +361,19 @@ function toIST(utcStr) {
   if (isNaN(d)) return null;
   return new Date(d.getTime()+IST_OFFSET_MS).toISOString();
 }
-function mapEventType(type) {
+function mapEventType(type, raw) {
   if (!type) return "unknown";
   const t = type.toLowerCase();
+  // Handle Analytic events — check objectsFound for actual type
+  if (t === "analytic" || t.includes("analytic")) {
+    const objects = raw?.data?.objectsFound || raw?.objectsFound || [];
+    const types = objects.map(o => (o.type||"").toLowerCase());
+    if (types.some(x => x.includes("person")||x.includes("people"))) return "person_detected";
+    if (types.some(x => x.includes("vehicle")||x.includes("car")))   return "vehicle_detected";
+    if (types.some(x => x.includes("crowd")))                         return "crowd_detected";
+    if (types.some(x => x.includes("face")))                          return "person_detected";
+    return "analytic"; // keep as analytic if no match
+  }
   if (t.includes("motion")||t.includes("person")||t.includes("people")) return "person_detected";
   if (t.includes("vehicle")||t.includes("car")||t.includes("alpr"))     return "vehicle_detected";
   if (t.includes("crowd"))    return "crowd_detected";
@@ -424,7 +434,7 @@ app.post("/webhook", async (req, res) => {
   for (const raw of rawEvents) {
     const camera_id      = String(raw.deviceId || raw.camera_id || "UNKNOWN");
     const event_type_raw = raw.type || raw.event_type || "unknown";
-    const event_type     = mapEventType(event_type_raw);
+    const event_type     = mapEventType(event_type_raw, raw);
     const timestamp_utc  = raw.data?.startTimeUtc || raw.timestamp_utc || new Date().toISOString();
     const client_id      = await getSocietyCode(raw.integration);
     const thumbnail_url  = raw.data?.thumbnailUrl   || null;
@@ -434,7 +444,9 @@ app.post("/webhook", async (req, res) => {
     const camName        = await getCameraName(camera_id);
     const visitorTypes   = ["person_detected","vehicle_detected","crowd_detected"];
     const event_uid      = `${camera_id}-${raw.id||Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-    const event = { event_uid, camera_id, camera_location:camName, event_type, event_type_raw, visitor_count:visitorTypes.includes(event_type)?1:0, confidence:raw.confidence||null, client_id, thumbnail_url, video_url, metadata:raw.data||{}, timestamp_utc, timestamp_ist:ist, source_id:String(raw.id||"") };
+    const objects = raw?.data?.objectsFound || raw?.objectsFound || [];
+    const visitorCount = visitorTypes.includes(event_type) ? Math.max(1, objects.filter(o=>["person","people","face"].includes((o.type||"").toLowerCase())).length) : 0;
+    const event = { event_uid, camera_id, camera_location:camName, event_type, event_type_raw, visitor_count:visitorCount, confidence:raw.confidence||null, client_id, thumbnail_url, video_url, metadata:raw.data||{}, timestamp_utc, timestamp_ist:ist, source_id:String(raw.id||"") };
     try {
       await pool.query(
         `INSERT INTO events (event_uid,camera_id,camera_location,event_type,event_type_raw,visitor_count,confidence,client_id,thumbnail_url,video_url,metadata,timestamp_utc,timestamp_ist,source_id)
