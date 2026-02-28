@@ -342,6 +342,97 @@ async function sendDailyReports() {
   } catch (err) { console.error("Daily report error:", err.message); }
 }
 
+// ── WEEKLY AI REPORT (Monday 9 AM IST = 3:30 AM UTC) ──
+async function sendWeeklyAIReport() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) { console.log("ANTHROPIC_API_KEY not set - skipping weekly AI report"); return; }
+  try {
+    const { rows: admins } = await pool.query(
+      "SELECT u.email,u.name,s.name as society_name,s.code FROM users u JOIN societies s ON u.society_id=s.id WHERE u.role='admin' AND u.is_active=true"
+    );
+    for (const admin of admins) {
+      const cid = admin.code;
+      const vt = `('person_detected','vehicle_detected','crowd_detected')`;
+      const [weekR, camsR, downR, hourR] = await Promise.all([
+        pool.query(`SELECT COALESCE(SUM(visitor_count),0) as v FROM events WHERE event_type IN ${vt} AND timestamp_utc>=NOW()-INTERVAL '7 days' AND client_id=$1`,[cid]),
+        pool.query(`SELECT camera_id,COALESCE(c.name,'Camera '||e.camera_id) as location,COUNT(*) as count FROM events e LEFT JOIN cameras c ON c.camera_uid=e.camera_id WHERE e.timestamp_utc>=NOW()-INTERVAL '7 days' AND e.client_id=$1 GROUP BY e.camera_id,c.name ORDER BY count DESC`,[cid]),
+        pool.query(`SELECT camera_id,COUNT(*) as incidents FROM events WHERE event_type='camera_offline' AND timestamp_utc>=NOW()-INTERVAL '7 days' AND client_id=$1 GROUP BY camera_id`,[cid]),
+        pool.query(`SELECT EXTRACT(HOUR FROM timestamp_utc+INTERVAL '5 hours 30 minutes') as hour, SUM(visitor_count) as v FROM events WHERE event_type IN ${vt} AND timestamp_utc>=NOW()-INTERVAL '7 days' AND client_id=$1 GROUP BY hour ORDER BY hour`,[cid]),
+      ]);
+      const weekV = parseInt(weekR.rows[0].v);
+      const cameraData = camsR.rows.map(r=>({camera:r.location,events:parseInt(r.count)}));
+      const downtimeData = downR.rows.map(r=>({camera:r.camera_id,incidents:parseInt(r.incidents)}));
+      const hourData = {};
+      hourR.rows.forEach(r=>{ hourData[parseInt(r.hour)]=parseInt(r.v); });
+
+      const prompt = `You are a security intelligence AI for ${admin.society_name}, a residential society in India. Analyze the following weekly data and provide actionable insights for the society committee.
+
+WEEKLY DATA (Last 7 days):
+- Total visitors this week: ${weekV}
+- Camera activity: ${JSON.stringify(cameraData)}
+- Camera downtime incidents: ${JSON.stringify(downtimeData)}
+- Visitor count by hour (IST): ${JSON.stringify(hourData)}
+
+Provide exactly 6 insights in this JSON format (respond with ONLY valid JSON):
+{"insights":[{"id":1,"priority":"high|medium|low","category":"Security|Operations|Maintenance|Pattern|Recommendation|Alert","title":"Short title","finding":"What data shows","action":"Specific action for committee","metric":"Key number","metric_label":"Label"}],"summary":"Executive summary paragraph"}`;
+
+      const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01"},
+        body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:1500, messages:[{role:"user",content:prompt}] })
+      });
+      const aiData = await aiRes.json();
+      const text = aiData.content?.map(c=>c.text||"").join("") || "";
+      const clean = text.replace(/```json|```/g,"").trim();
+      const insights = JSON.parse(clean);
+      const priorityLabel = {high:"🔴 Urgent",medium:"🟡 Watch",low:"🟢 Good"};
+      const priorityColor = {high:"#ef4444",medium:"#f59e0b",low:"#4ade80"};
+      const date = new Date(Date.now()+IST_OFFSET_MS).toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+      const insightRows = insights.insights.map(ins=>`
+        <div style="margin-bottom:16px;padding:16px;border:1px solid #e2e8f0;border-radius:8px;border-left:4px solid ${priorityColor[ins.priority]||"#38bdf8"}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+            <div>
+              <span style="font-size:11px;font-weight:700;color:${priorityColor[ins.priority]}">${priorityLabel[ins.priority]||ins.priority}</span>
+              <span style="font-size:11px;color:#64748b;margin-left:8px">${ins.category}</span>
+            </div>
+            ${ins.metric?`<div style="text-align:right"><div style="font-size:20px;font-weight:900;color:#0ea5e9">${ins.metric}</div><div style="font-size:10px;color:#64748b">${ins.metric_label}</div></div>`:""}
+          </div>
+          <h4 style="margin:0 0 6px;font-size:14px;color:#0f1923">${ins.title}</h4>
+          <p style="margin:0 0 8px;font-size:12px;color:#475569">${ins.finding}</p>
+          <div style="background:#f0f9ff;padding:10px 12px;border-radius:6px">
+            <div style="font-size:10px;font-weight:700;color:#0ea5e9;margin-bottom:4px">RECOMMENDED ACTION</div>
+            <p style="margin:0;font-size:12px;color:#0f1923">${ins.action}</p>
+          </div>
+        </div>`).join("");
+
+      const emailHtml = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#f8fafc;border-radius:16px;overflow:hidden">
+        <div style="background:#0f1923;padding:28px 32px;text-align:center;border-bottom:3px solid #38bdf8">
+          <span style="font-size:26px;font-weight:900;color:#38bdf8">Society<span style="color:#e2e8f0">Guard</span></span>
+          <div style="font-size:10px;color:#64748b;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Weekly AI Security Report</div>
+        </div>
+        <div style="background:#ffffff;padding:32px">
+          <h2 style="color:#0f1923;margin:0 0 4px">${admin.society_name}</h2>
+          <p style="color:#64748b;margin:0 0 20px;font-size:13px">${date} · Weekly Analysis</p>
+          <div style="background:#f0f9ff;border-radius:8px;padding:16px 20px;margin-bottom:24px;border:1px solid #bae6fd">
+            <div style="font-size:11px;font-weight:700;color:#0ea5e9;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Executive Summary</div>
+            <p style="margin:0;font-size:13px;color:#1e293b;line-height:1.6">${insights.summary}</p>
+          </div>
+          <h3 style="color:#0f1923;margin:0 0 16px;font-size:14px;text-transform:uppercase;letter-spacing:1px">Security Insights & Recommendations</h3>
+          ${insightRows}
+        </div>
+        <div style="background:#0f1923;padding:20px 32px;text-align:center">
+          <p style="margin:0 0 4px;font-size:12px;color:#64748b">Powered by <strong style="color:#38bdf8">Securizen Technologies</strong></p>
+          <p style="margin:0;font-size:11px;color:#334155">© 2026 Securizen Technologies. All rights reserved.</p>
+        </div>
+      </div>`;
+
+      await sendEmail(admin.email, `🤖 Weekly AI Security Report — ${admin.society_name} — ${date}`, emailHtml);
+      console.log(`Weekly AI report sent to ${admin.email}`);
+    }
+  } catch(err) { console.error("Weekly AI report error:", err.message); }
+}
+
 // Schedule daily report at 3:30 AM UTC (9 AM IST)
 // ── KEEP-ALIVE PING (prevents Render free tier spin-down) ──
 const SELF_URL = process.env.RENDER_EXTERNAL_URL || "https://societyguard-backend.onrender.com";
@@ -359,7 +450,17 @@ function scheduleDailyReport() {
   if (next <= now) next.setUTCDate(next.getUTCDate()+1);
   const ms = next-now;
   console.log(`Daily report scheduled in ${Math.round(ms/60000)} minutes`);
-  setTimeout(()=>{ sendDailyReports(); setInterval(sendDailyReports, 24*60*60*1000); }, ms);
+  setTimeout(()=>{
+    sendDailyReports();
+    setInterval(()=>{
+      sendDailyReports();
+      // On Mondays (UTC day=1 = Mon 9AM IST), also send weekly AI report
+      if(new Date().getUTCDay()===1){
+        console.log("Monday — sending weekly AI security report");
+        sendWeeklyAIReport();
+      }
+    }, 24*60*60*1000);
+  }, ms);
 }
 
 // ── HELPERS ──
@@ -692,13 +793,14 @@ app.get("/api/logs", requireAuth, async (req, res) => {
 
 // ── EVENTS ──
 app.get("/api/events", requireAuth, async (req, res) => {
-  const { client_id, event_type, from, to, limit=200 } = req.query;
+  const { client_id, event_type, camera_id, from, to, limit=200 } = req.query;
   let where=[]; let params=[];
   const cid = req.currentUser?.role==="admin" ? req.currentUser.society_id : null;
   if (client_id) { params.push(client_id); where.push(`client_id=$${params.length}`); }
   if (event_type) { params.push(event_type); where.push(`event_type=$${params.length}`); }
-  if (from) { params.push(from); where.push(`timestamp_ist>=$${params.length}`); }
-  if (to)   { params.push(to);   where.push(`timestamp_ist<=$${params.length}`); }
+  if (camera_id) { params.push(camera_id); where.push(`camera_id=$${params.length}`); }
+  if (from) { params.push(from); where.push(`timestamp_utc>=$${params.length}`); }
+  if (to)   { params.push(to);   where.push(`timestamp_utc<=$${params.length}`); }
   params.push(parseInt(limit));
   const { rows } = await pool.query(`SELECT * FROM events ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY timestamp_ist DESC LIMIT $${params.length}`, params);
   return res.json({ total:rows.length, events:rows });
