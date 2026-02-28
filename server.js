@@ -247,29 +247,38 @@ async function sendInviteEmail(user, token) {
     return;
   }
   await sendEmail(cleanEmail, "You've been invited to SocietyGuard", `
-    <div style="font-family:sans-serif;max-width:500px;margin:0 auto">
-      <div style="background:#0f1923;padding:32px;border-radius:12px;color:#e2e8f0">
-        <h2 style="color:#38bdf8;margin:0 0 16px">Welcome to SocietyGuard 🏢</h2>
-        <p>Hi <strong>${user.name}</strong>,</p>
-        <p>You've been added as <strong>${user.role}</strong> on SocietyGuard.</p>
-        <p>Click the button below to set your password and activate your account:</p>
-        <a href="${link}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:#0a0c10;border-radius:8px;font-weight:700;text-decoration:none">Set My Password →</a>
-        <p style="color:#64748b;font-size:12px">This link expires in 24 hours. Username: <strong style="color:#38bdf8">${user.username}</strong></p>
-      </div>
-    </div>`);
+    ${EMAIL_HEADER}
+        <h2 style="color:#0f1923;font-size:22px;font-weight:800;margin:0 0 8px">Welcome to SocietyGuard! 🏢</h2>
+        <p style="color:#475569;font-size:14px;margin:0 0 24px">You have been invited to join the platform</p>
+        <p style="color:#1e293b;font-size:15px;margin:0 0 8px">Hi <strong>${user.name}</strong>,</p>
+        <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 24px">You've been added as <strong style="color:#0ea5e9">${user.role}</strong> on SocietyGuard. Click the button below to set your password and activate your account.</p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="${link}" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:#0a0c10;border-radius:10px;font-weight:800;font-size:15px;text-decoration:none;letter-spacing:0.3px">Set My Password →</a>
+        </div>
+        <div style="background:#f1f5f9;border-radius:8px;padding:14px 18px;margin-top:24px">
+          <p style="margin:0;font-size:12px;color:#64748b">🔐 Your username: <strong style="color:#0ea5e9;font-size:13px">${user.username}</strong></p>
+          <p style="margin:6px 0 0;font-size:11px;color:#94a3b8">⏰ This link expires in 24 hours. Do not share this email with anyone.</p>
+        </div>
+      ${EMAIL_FOOTER}`);
 }
 
 async function sendOfflineAlert(event) {
   if (!process.env.ALERT_EMAIL) return;
-  await sendEmail(process.env.ALERT_EMAIL, `🚨 Camera Offline: ${event.camera_id}`, `
-    <div style="font-family:sans-serif;max-width:500px">
-      <div style="background:#0f1923;padding:24px;border-radius:12px;color:#e2e8f0">
-        <h2 style="color:#f87171;margin:0 0 16px">Camera Offline Alert</h2>
-        <p><b style="color:#64748b">Camera:</b> <span style="color:#38bdf8">${event.camera_id}</span></p>
-        <p><b style="color:#64748b">Location:</b> ${event.camera_location}</p>
-        <p><b style="color:#64748b">Time (IST):</b> ${new Date(event.timestamp_ist).toLocaleString("en-IN")}</p>
-      </div>
-    </div>`);
+  await sendEmail(process.env.ALERT_EMAIL, `🚨 Camera Offline Alert: ${event.camera_id}`, `
+    ${EMAIL_HEADER}
+        <div style="display:inline-block;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 16px;margin-bottom:20px">
+          <span style="color:#ef4444;font-weight:700;font-size:13px">🚨 CAMERA OFFLINE</span>
+        </div>
+        <h2 style="color:#0f1923;font-size:20px;font-weight:800;margin:0 0 20px">Immediate Attention Required</h2>
+        <table style="width:100%;border-collapse:collapse">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;width:40%">Camera ID</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;color:#0ea5e9;font-weight:700">${event.camera_id}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px">Location</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-weight:600">${event.camera_location}</td></tr>
+          <tr><td style="padding:10px 0;color:#64748b;font-size:13px">Time (IST)</td><td style="padding:10px 0;color:#1e293b">${new Date(event.timestamp_ist).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})}</td></tr>
+        </table>
+        <div style="background:#fef2f2;border-left:4px solid #ef4444;padding:14px 18px;margin-top:24px;border-radius:4px">
+          <p style="margin:0;font-size:13px;color:#991b1b">Please inspect the camera immediately and restore connection.</p>
+        </div>
+      ${EMAIL_FOOTER}`);
 }
 
 // Daily report at 9 AM IST = 3:30 AM UTC
