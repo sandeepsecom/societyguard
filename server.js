@@ -418,6 +418,7 @@ function requireRole(...roles) {
 
 // ── POST /webhook ──
 app.post("/webhook", async (req, res) => {
+  console.log("📡 Webhook received:", JSON.stringify(req.body).slice(0,200));
   const rawEvents = Array.isArray(req.body) ? req.body : [req.body];
   let processed = 0;
   for (const raw of rawEvents) {
@@ -429,7 +430,7 @@ app.post("/webhook", async (req, res) => {
     const thumbnail_url  = raw.data?.thumbnailUrl   || null;
     const video_url      = raw.data?.sharedVideoUrl || null;
     const ist            = toIST(timestamp_utc);
-    if (!ist) continue;
+    if (!ist) { console.log("⚠️ Skipping event - invalid timestamp:", timestamp_utc); continue; }
     const camName        = await getCameraName(camera_id);
     const visitorTypes   = ["person_detected","vehicle_detected","crowd_detected"];
     const event_uid      = `${camera_id}-${raw.id||Date.now()}-${Math.random().toString(36).slice(2,6)}`;
@@ -443,7 +444,7 @@ app.post("/webhook", async (req, res) => {
       processed++;
       await auditLog("webhook_event", "event", event_uid, {camera_id, event_type, client_id}, null, null, null);
       if (event_type==="camera_offline") await sendOfflineAlert(event);
-    } catch (err) { console.error("DB insert:", err.message); }
+    } catch (err) { console.error("DB insert error:", err.message, JSON.stringify(event).slice(0,200)); }
   }
   return res.status(200).json({ received:processed });
 });
