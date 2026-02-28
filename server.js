@@ -220,7 +220,7 @@ async function sendEmail(to, subject, html) {
         headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           personalizations: [{ to: [{ email: to.trim() }] }],
-          from: { email: "noreply@cloudcctv.app", name: "SocietyGuard" },
+          from: { email: from.replace(/.*<(.+)>.*/, "$1").trim() || "sandeepsecom@gmail.com", name: "SocietyGuard" },
           subject, content: [{ type: "text/html", value: html }]
         })
       });
