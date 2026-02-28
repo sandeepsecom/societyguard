@@ -749,6 +749,36 @@ app.delete("/api/events", requireAuth, requireRole("superuser"), async (req,res)
   return res.json({ cleared:parseInt(rows[0].total) });
 });
 
+// ── POST /api/ai-insights ──
+app.post("/api/ai-insights", requireAuth, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "AI insights not configured. Add ANTHROPIC_API_KEY to environment." });
+  try {
+    const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1500,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+    const text = data.content?.map(c => c.text || "").join("") || "";
+    return res.json({ result: text });
+  } catch (err) {
+    console.error("AI insights error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/health", async (_,res) => {
   const {rows}=await pool.query("SELECT COUNT(*) as total FROM events");
   return res.json({ status:"ok", events_stored:parseInt(rows[0].total), time_ist:toIST(new Date().toISOString()), database:"PostgreSQL", email_alerts:(process.env.SENDGRID_API_KEY||process.env.RESEND_API_KEY)?"enabled":"disabled" });
