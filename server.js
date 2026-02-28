@@ -454,6 +454,7 @@ app.post("/webhook", async (req, res) => {
         [event.event_uid,event.camera_id,event.camera_location,event.event_type,event.event_type_raw,event.visitor_count,event.confidence,event.client_id,event.thumbnail_url,event.video_url,JSON.stringify(event.metadata),event.timestamp_utc,event.timestamp_ist,event.source_id]
       );
       processed++;
+      console.log(`✅ Stored: camera=${camera_id} type=${event_type} client=${client_id} visitors=${visitorCount}`);
       await auditLog("webhook_event", "event", event_uid, {camera_id, event_type, client_id}, null, null, null);
       if (event_type==="camera_offline") await sendOfflineAlert(event);
     } catch (err) { console.error("DB insert error:", err.message, JSON.stringify(event).slice(0,200)); }
