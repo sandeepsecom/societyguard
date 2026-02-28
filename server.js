@@ -147,6 +147,7 @@ async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_events_client   ON events(client_id);
     CREATE INDEX IF NOT EXISTS idx_events_cam      ON events(camera_id);
     CREATE INDEX IF NOT EXISTS idx_events_type     ON events(event_type);
+    ALTER TABLE societies ADD COLUMN IF NOT EXISTS external_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_events_ts       ON events(timestamp_utc);
     CREATE INDEX IF NOT EXISTS idx_audit_user      ON audit_logs(user_id);
     CREATE INDEX IF NOT EXISTS idx_audit_created   ON audit_logs(created_at);
@@ -158,6 +159,12 @@ async function initDB() {
     await pool.query(`INSERT INTO societies (code,name,address) VALUES ('C01','Green Valley Society','Mumbai'),('C02','Sunrise Heights','Mumbai'),('C03','Royal Palms','Mumbai')`);
     console.log("Default societies seeded");
   }
+  // Always run: map external IDs and fix historic events
+  await pool.query(`UPDATE societies SET external_id='54321' WHERE code='C01' AND (external_id IS NULL OR external_id='')`);
+  await pool.query(`UPDATE events SET client_id='C01' WHERE client_id='54321'`);
+  await pool.query(`UPDATE events SET client_id='C02' WHERE client_id='54322'`);
+  await pool.query(`UPDATE events SET client_id='C03' WHERE client_id='54323'`);
+  console.log("External ID mapping applied");
 
   // Seed default users
   const { rowCount: userCount } = await pool.query("SELECT 1 FROM users WHERE password_hash IS NOT NULL LIMIT 1");
@@ -388,9 +395,17 @@ async function getCameraName(cameraUid) {
 }
 async function getSocietyCode(integration) {
   if (!integration) return "C01";
-  const raw = integration.clientId || integration.siteId || "C01";
-  const { rows } = await pool.query("SELECT code FROM societies WHERE code=$1 OR id::text=$1", [raw]);
-  return rows[0]?.code || raw;
+  const raw = String(integration.clientId || integration.siteId || integration.integrationId || "");
+  if (!raw) return "C01";
+  // Try matching by: code, id, or external_id
+  const { rows } = await pool.query(
+    "SELECT code FROM societies WHERE code=$1 OR id::text=$1 OR external_id=$1 LIMIT 1", [raw]
+  );
+  if (rows[0]) return rows[0].code;
+  // If numeric ID not found in societies, default to first society
+  const { rows: first } = await pool.query("SELECT code FROM societies ORDER BY id LIMIT 1");
+  console.log(`⚠️ getSocietyCode: no match for '${raw}', defaulting to ${first[0]?.code||"C01"}`);
+  return first[0]?.code || "C01";
 }
 async function auditLog(action, entity, entity_id, details, user, ip, society_id) {
   try {
