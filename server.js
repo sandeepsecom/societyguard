@@ -129,13 +129,6 @@ async function initDB() {
       PRIMARY KEY (user_id, society_id)
     );
 
-    -- User-Society access (multi-society per user)
-    CREATE TABLE IF NOT EXISTS user_societies (
-      user_id     INT REFERENCES users(id) ON DELETE CASCADE,
-      society_id  INT REFERENCES societies(id) ON DELETE CASCADE,
-      PRIMARY KEY (user_id, society_id)
-    );
-
     -- App settings (logo etc)
     CREATE TABLE IF NOT EXISTS app_settings (
       key         TEXT PRIMARY KEY,
@@ -291,9 +284,13 @@ async function sendOfflineAlert(event) {
 // Daily report at 9 AM IST = 3:30 AM UTC
 async function sendDailyReports() {
   try {
-    const { rows: admins } = await pool.query(
-      "SELECT u.email,u.name,s.name as society_name,s.code FROM users u JOIN societies s ON u.society_id=s.id WHERE u.role='admin' AND u.is_active=true"
-    );
+    // Get all active admins — join through both society_id and user_societies
+    const { rows: admins } = await pool.query(`
+      SELECT DISTINCT u.email,u.name,s.name as society_name,s.code
+      FROM users u
+      JOIN societies s ON (s.id=u.society_id OR s.id IN (SELECT society_id FROM user_societies WHERE user_id=u.id))
+      WHERE u.role='admin' AND u.is_active=true AND u.email IS NOT NULL
+    `);
     for (const admin of admins) {
       const cid = admin.code;
       const vt = `('person_detected','vehicle_detected','crowd_detected')`;
@@ -347,10 +344,14 @@ async function sendWeeklyAIReport() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { console.log("ANTHROPIC_API_KEY not set - skipping weekly AI report"); return; }
   try {
-    const { rows: admins } = await pool.query(
-      "SELECT u.email,u.name,s.name as society_name,s.code FROM users u JOIN societies s ON u.society_id=s.id WHERE u.role='admin' AND u.is_active=true"
-    );
+    const { rows: admins } = await pool.query(`
+      SELECT DISTINCT u.email,u.name,s.name as society_name,s.code
+      FROM users u
+      JOIN societies s ON (s.id=u.society_id OR s.id IN (SELECT society_id FROM user_societies WHERE user_id=u.id))
+      WHERE u.role='admin' AND u.is_active=true AND u.email IS NOT NULL
+    `);
     for (const admin of admins) {
+      try {
       const cid = admin.code;
       const vt = `('person_detected','vehicle_detected','crowd_detected')`;
       const [weekR, camsR, downR, hourR] = await Promise.all([
@@ -429,6 +430,7 @@ Provide exactly 6 insights in this JSON format (respond with ONLY valid JSON):
 
       await sendEmail(admin.email, `🤖 Weekly AI Security Report — ${admin.society_name} — ${date}`, emailHtml);
       console.log(`Weekly AI report sent to ${admin.email}`);
+      } catch(adminErr) { console.error(`Weekly AI report failed for ${admin.email}:`, adminErr.message); }
     }
   } catch(err) { console.error("Weekly AI report error:", err.message); }
 }
@@ -482,7 +484,8 @@ function mapEventType(type, raw) {
     if (types.some(x => x.includes("face")))                          return "person_detected";
     return "analytic"; // keep as analytic if no match
   }
-  if (t.includes("motion")||t.includes("person")||t.includes("people")) return "person_detected";
+  if (t.includes("person")||t.includes("people")) return "person_detected";
+  if (t.includes("motion")) return "motion_detected";
   if (t.includes("vehicle")||t.includes("car")||t.includes("alpr"))     return "vehicle_detected";
   if (t.includes("crowd"))    return "crowd_detected";
   if (t.includes("loiter"))   return "loitering";
@@ -551,7 +554,7 @@ app.post("/webhook", async (req, res) => {
     const camera_id      = String(raw.deviceId || raw.camera_id || "UNKNOWN");
     const event_type_raw = raw.type || raw.event_type || "unknown";
     const event_type     = mapEventType(event_type_raw, raw);
-    const timestamp_utc  = raw.data?.startTimeUtc || raw.timestamp_utc || new Date().toISOString();
+    const timestamp_utc  = raw.data?.timestampUtc || raw.data?.startTimeUtc || raw.data?.endTimeUtc || raw.timestamp_utc || new Date().toISOString();
     const client_id      = await getSocietyCode(raw.integration);
     const thumbnail_url  = raw.data?.thumbnailUrl   || null;
     const video_url      = raw.data?.sharedVideoUrl || null;
@@ -617,7 +620,13 @@ app.post("/api/set-password", async (req, res) => {
 
 // ── SOCIETIES ──
 app.get("/api/societies", requireAuth, async (req, res) => {
-  const { rows } = await pool.query("SELECT s.*,COUNT(DISTINCT u.id) as user_count,COUNT(DISTINCT c.id) as camera_count FROM societies s LEFT JOIN users u ON u.society_id=s.id LEFT JOIN cameras c ON c.society_id=s.id GROUP BY s.id ORDER BY s.name");
+  let filter = "";
+  const params = [];
+  if (req.currentUser?.role === "admin" && req.currentUser.society_id) {
+    params.push(req.currentUser.society_id);
+    filter = `WHERE s.id=$${params.length}`;
+  }
+  const { rows } = await pool.query(`SELECT s.*,COUNT(DISTINCT u.id) as user_count,COUNT(DISTINCT c.id) as camera_count FROM societies s LEFT JOIN users u ON u.society_id=s.id LEFT JOIN cameras c ON c.society_id=s.id ${filter} GROUP BY s.id ORDER BY s.name`, params);
   return res.json(rows);
 });
 app.post("/api/societies", requireAuth, requireRole("superuser"), async (req, res) => {
@@ -661,7 +670,11 @@ app.delete("/api/wings/:id", requireAuth, requireRole("superuser"), async (req, 
 // ── CAMERAS ──
 app.get("/api/cameras", requireAuth, async (req, res) => {
   const { society_id } = req.query;
-  const { rows } = await pool.query("SELECT c.*,s.name as society_name,w.name as wing_name FROM cameras c LEFT JOIN societies s ON c.society_id=s.id LEFT JOIN wings w ON c.wing_id=w.id WHERE ($1::int IS NULL OR c.society_id=$1) ORDER BY c.name", [society_id||null]);
+  // Admins see only their own society's cameras
+  const effectiveSocId = req.currentUser?.role === "admin"
+    ? req.currentUser.society_id
+    : (society_id ? parseInt(society_id) : null);
+  const { rows } = await pool.query("SELECT c.*,s.name as society_name,w.name as wing_name FROM cameras c LEFT JOIN societies s ON c.society_id=s.id LEFT JOIN wings w ON c.wing_id=w.id WHERE ($1::int IS NULL OR c.society_id=$1) ORDER BY c.name", [effectiveSocId]);
   return res.json(rows);
 });
 app.post("/api/cameras", requireAuth, requireRole("superuser"), async (req, res) => {
@@ -787,7 +800,9 @@ app.get("/api/logs", requireAuth, async (req, res) => {
   params.push(parseInt(limit)); params.push(parseInt(offset));
   const sql = `SELECT * FROM audit_logs ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY created_at DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
   const { rows } = await pool.query(sql, params);
-  const { rows:cnt } = await pool.query(`SELECT COUNT(*) as total FROM audit_logs ${where.length?"WHERE "+where.slice(0,-2).join(" AND "):""}`);
+  // Count query uses same filters but without limit/offset params
+  const countParams = params.slice(0,-2); // remove limit and offset
+  const { rows:cnt } = await pool.query(`SELECT COUNT(*) as total FROM audit_logs ${where.length?"WHERE "+where.join(" AND "):""}`, countParams);
   return res.json({ total:parseInt(cnt[0]?.total||0), logs:rows });
 });
 
@@ -795,21 +810,31 @@ app.get("/api/logs", requireAuth, async (req, res) => {
 app.get("/api/events", requireAuth, async (req, res) => {
   const { client_id, event_type, camera_id, from, to, limit=200 } = req.query;
   let where=[]; let params=[];
-  const cid = req.currentUser?.role==="admin" ? req.currentUser.society_id : null;
-  if (client_id) { params.push(client_id); where.push(`client_id=$${params.length}`); }
+  // Admins are scoped to their own society's code
+  const effectiveCid = req.currentUser?.role==="admin"
+    ? (await pool.query("SELECT code FROM societies WHERE id=$1",[req.currentUser.society_id])).rows[0]?.code
+    : client_id||null;
+  if (effectiveCid) { params.push(effectiveCid); where.push(`client_id=$${params.length}`); }
+  else if (client_id) { params.push(client_id); where.push(`client_id=$${params.length}`); }
   if (event_type) { params.push(event_type); where.push(`event_type=$${params.length}`); }
   if (camera_id) { params.push(camera_id); where.push(`camera_id=$${params.length}`); }
   if (from) { params.push(from); where.push(`timestamp_utc>=$${params.length}`); }
   if (to)   { params.push(to);   where.push(`timestamp_utc<=$${params.length}`); }
   params.push(parseInt(limit));
-  const { rows } = await pool.query(`SELECT * FROM events ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY timestamp_ist DESC LIMIT $${params.length}`, params);
+  const { rows } = await pool.query(`SELECT * FROM events ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY timestamp_utc DESC LIMIT $${params.length}`, params);
   return res.json({ total:rows.length, events:rows });
 });
 
 // ── STATS ──
 app.get("/api/stats", requireAuth, async (req, res) => {
   const { client_id } = req.query;
-  const cid = client_id ? `AND client_id='${client_id.replace(/'/g,"''")}'` : "";
+  // If admin, always scope to their society code regardless of query param
+  let resolvedCid = client_id ? String(client_id).replace(/[^A-Za-z0-9_-]/g,"") : null;
+  if (req.currentUser?.role === "admin" && req.currentUser.society_id) {
+    const { rows: socRows } = await pool.query("SELECT code FROM societies WHERE id=$1", [req.currentUser.society_id]);
+    if (socRows[0]) resolvedCid = socRows[0].code;
+  }
+  const cid = resolvedCid ? `AND client_id='${resolvedCid}'` : "";
   const vt  = `('person_detected','vehicle_detected','crowd_detected')`;
   try {
     const [todayR,yestR,weekR,camsR,downR,countR] = await Promise.all([
