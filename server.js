@@ -247,7 +247,7 @@ async function sendInviteEmail(user, token) {
     return;
   }
   await sendEmail(cleanEmail, "You've been invited to SocietyGuard", `
-    ${EMAIL_HEADER}
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f8fafc;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)"><div style="background:#0f1923;padding:28px 32px;text-align:center;border-bottom:3px solid #38bdf8"><span style="font-size:26px;font-weight:900;color:#38bdf8;letter-spacing:-1px">Society<span style="color:#e2e8f0">Guard</span></span><div style="font-size:10px;color:#64748b;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Security Intelligence Platform</div></div><div style="background:#ffffff;padding:36px 32px">
         <h2 style="color:#0f1923;font-size:22px;font-weight:800;margin:0 0 8px">Welcome to SocietyGuard! 🏢</h2>
         <p style="color:#475569;font-size:14px;margin:0 0 24px">You have been invited to join the platform</p>
         <p style="color:#1e293b;font-size:15px;margin:0 0 8px">Hi <strong>${user.name}</strong>,</p>
@@ -259,13 +259,13 @@ async function sendInviteEmail(user, token) {
           <p style="margin:0;font-size:12px;color:#64748b">🔐 Your username: <strong style="color:#0ea5e9;font-size:13px">${user.username}</strong></p>
           <p style="margin:6px 0 0;font-size:11px;color:#94a3b8">⏰ This link expires in 24 hours. Do not share this email with anyone.</p>
         </div>
-      ${EMAIL_FOOTER}`);
+    </div><div style="background:#0f1923;padding:20px 32px;text-align:center"><p style="margin:0 0 6px;font-size:12px;color:#64748b">Powered by <strong style="color:#38bdf8">Securizen Technologies</strong></p><p style="margin:0;font-size:11px;color:#334155">This is an automated message from SocietyGuard. Please do not reply.</p><p style="margin:8px 0 0;font-size:11px;color:#334155">© 2026 Securizen Technologies. All rights reserved.</p></div></div>`);
 }
 
 async function sendOfflineAlert(event) {
   if (!process.env.ALERT_EMAIL) return;
   await sendEmail(process.env.ALERT_EMAIL, `🚨 Camera Offline Alert: ${event.camera_id}`, `
-    ${EMAIL_HEADER}
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f8fafc;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)"><div style="background:#0f1923;padding:28px 32px;text-align:center;border-bottom:3px solid #38bdf8"><span style="font-size:26px;font-weight:900;color:#38bdf8;letter-spacing:-1px">Society<span style="color:#e2e8f0">Guard</span></span><div style="font-size:10px;color:#64748b;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Security Intelligence Platform</div></div><div style="background:#ffffff;padding:36px 32px">
         <div style="display:inline-block;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 16px;margin-bottom:20px">
           <span style="color:#ef4444;font-weight:700;font-size:13px">🚨 CAMERA OFFLINE</span>
         </div>
@@ -278,7 +278,7 @@ async function sendOfflineAlert(event) {
         <div style="background:#fef2f2;border-left:4px solid #ef4444;padding:14px 18px;margin-top:24px;border-radius:4px">
           <p style="margin:0;font-size:13px;color:#991b1b">Please inspect the camera immediately and restore connection.</p>
         </div>
-      ${EMAIL_FOOTER}`);
+    </div><div style="background:#0f1923;padding:20px 32px;text-align:center"><p style="margin:0 0 6px;font-size:12px;color:#64748b">Powered by <strong style="color:#38bdf8">Securizen Technologies</strong></p><p style="margin:0;font-size:11px;color:#334155">This is an automated message from SocietyGuard. Please do not reply.</p><p style="margin:8px 0 0;font-size:11px;color:#334155">© 2026 Securizen Technologies. All rights reserved.</p></div></div>`);
 }
 
 // Daily report at 9 AM IST = 3:30 AM UTC
