@@ -303,8 +303,8 @@ async function sendDailyReports() {
       const today = parseInt(todayR.rows[0].v);
       const yest  = parseInt(yestR.rows[0].v);
       const delta = today - yest;
-      const camRows = camsR.rows.map(r => `<tr><td style="padding:8px 12px;border-bottom:1px solid #1e293b">${r.camera_id}</td><td style="padding:8px 12px;border-bottom:1px solid #1e293b">${r.location}</td><td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#38bdf8">${r.count}</td></tr>`).join("");
-      const downRows = downR.rows.length ? downR.rows.map(r => `<tr><td style="padding:8px 12px">${r.camera_id}</td><td style="padding:8px 12px;color:#f87171">${r.incidents} incident(s)</td></tr>`).join("") : `<tr><td colspan="2" style="padding:8px 12px;color:#4ade80">All cameras online ✅</td></tr>`;
+      const camRows = camsR.rows.map(r => `<tr><td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#e2e8f0">${r.camera_id}</td><td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#e2e8f0">${r.location}</td><td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#38bdf8;font-weight:700">${r.count}</td></tr>`).join("");
+      const downRows = downR.rows.length ? downR.rows.map(r => `<tr><td style="padding:8px 12px;color:#e2e8f0">${r.camera_id}</td><td style="padding:8px 12px;color:#f87171;font-weight:700">${r.incidents} incident(s)</td></tr>`).join("") : `<tr><td colspan="2" style="padding:8px 12px;color:#4ade80">All cameras online ✅</td></tr>`;
       const date = new Date(Date.now()+IST_OFFSET_MS).toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
       await sendEmail(admin.email, `📊 Daily Report — ${admin.society_name} — ${date}`, `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
